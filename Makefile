@@ -31,7 +31,7 @@ radamsa.c: rad/*.scm
 	bin/ol $(OFLAGS) -o radamsa.c rad/main.scm
  
 radamsa-win32.c: rad/*.scm
-	test -x owl-lisp || git clone https://github.com/aoh/owl-lisp.git && cd owl-lisp && git checkout -b develop origin/develop && make
+	test -x owl-lisp/bin/ol || rm -rf owl-lisp && git clone https://github.com/aoh/owl-lisp.git && cd owl-lisp && git checkout -b develop origin/develop && make
 	owl-lisp/bin/ol -R ovm-win32.c $(OFLAGS) -o radamsa-win32.c rad/main.scm
 
 radamsa.fasl: rad/*.scm bin/ol
@@ -54,6 +54,7 @@ install: bin/radamsa
 clean:
 	-rm radamsa.c bin/radamsa .seal-of-quality
 	-rm bin/ol $(OWL).c.gz $(OWL).c
+	-rm -rf radamsa-win32 bin/radamsa.exe owl-lisp 
 
 test: .seal-of-quality
 
