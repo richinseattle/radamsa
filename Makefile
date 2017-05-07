@@ -24,7 +24,7 @@ bin/radamsa: radamsa.c
 
 bin/radamsa.exe: radamsa-win32.c
 	mkdir -p bin
-	$(WIN32_CC) $(CFLAGS) $(LDFLAGS) -o bin/radamsa.exe radamsa-win32.c
+	$(WIN32_CC) -DWIN32 $(CFLAGS) $(LDFLAGS) -o bin/radamsa.exe radamsa-win32.c -lwsock32
 
 radamsa.c: rad/*.scm
 	test -x bin/ol || make bin/ol
