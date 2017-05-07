@@ -7,8 +7,10 @@ OFLAGS=-O2
 OWL=ol-0.1.13
 OWLURL=https://github.com/aoh/owl-lisp/files/449350
 USR_BIN_OL=/usr/bin/ol
+WIN32_CC=x86_64-w64-mingw32-gcc
 
 everything: bin/radamsa
+win32: bin/radamsa.exe
 
 build_radamsa:
 	test -x $(USR_BIN_OL)
@@ -20,9 +22,17 @@ bin/radamsa: radamsa.c
 	mkdir -p bin
 	$(CC) $(CFLAGS) $(LDFLAGS) -o bin/radamsa radamsa.c
 
+bin/radamsa.exe: radamsa-win32.c
+	mkdir -p bin
+	$(WIN32_CC) $(CFLAGS) $(LDFLAGS) -o bin/radamsa.exe radamsa-win32.c
+
 radamsa.c: rad/*.scm
 	test -x bin/ol || make bin/ol
 	bin/ol $(OFLAGS) -o radamsa.c rad/main.scm
+ 
+radamsa-win32.c: rad/*.scm
+	test -x owl-lisp || git clone https://github.com/aoh/owl-lisp.git && cd owl-lisp && git checkout -b develop origin/develop && make
+	owl-lisp/bin/ol -R ovm-win32.c $(OFLAGS) -o radamsa-win32.c rad/main.scm
 
 radamsa.fasl: rad/*.scm bin/ol
 	bin/ol -o radamsa.fasl rad/main.scm
