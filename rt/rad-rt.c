@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <string.h>
+#include <stdio.h>
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -18,6 +19,9 @@
 #include <conio.h>
 #include <windows.h>
 typedef unsigned long in_addr_t;
+#ifdef EWOULDBLOCK
+#undef EWOULDBLOCK
+#endif
 #define EWOULDBLOCK WSAEWOULDBLOCK
 #else // !WIN32
 #include <netinet/in.h>
@@ -31,6 +35,8 @@ typedef unsigned long in_addr_t;
 #endif
 #endif // WIN32
 
+#include "include/libradamsa.h"
+
 typedef uintptr_t word;
 typedef uint8_t   byte;
 #ifdef _LP64
@@ -38,6 +44,36 @@ typedef int64_t   wdiff;
 #else
 typedef int32_t   wdiff;
 #endif
+
+#ifdef LIB_RADAMSA
+#define DEBUG 0
+ssize_t radamsa_read(int fd, void *buf, size_t count);
+ssize_t radamsa_write(int fd, const void *buf, size_t count);
+off_t   radamsa_lseek(int fd, off_t offset, int whence);
+
+#if 0
+#define malloc radamsa_malloc
+#define realloc radamsa_realloc
+#define free radamsa_free
+#define main radamsa_main
+#define IGNORE_FD 9999
+#define nanosleep(...) 0
+#define usleep(...) 0
+#define sleep(...) 0
+#define setsockopt(...) 0
+#define bind(...) 0
+#define accept(...) IGNORE_FD
+#define socket(...) IGNORE_FD
+#define bind(...) 0
+#define fcntl(...) 0
+#define sendto(...) 0
+#endif
+#else
+#define radamsa_read  read
+#define radamsa_write write
+#define radamsa_lseek lseek
+#endif
+
 
 /*** Macros ***/
 
@@ -146,10 +182,10 @@ char *getenv(const char *name);
 int setenv(const char *name, const char *value, int overwrite);
 DIR *opendir(const char *name);
 DIR *fdopendir(int fd);
-pid_t fork(void);
+//pid_t fork(void);
 pid_t waitpid(pid_t pid, int *status, int options);
 int chdir(const char *path);
-int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
+//int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
 
 #ifndef WIN32
 struct termios tsettings;
@@ -666,7 +702,7 @@ static word prim_sys(int op, word a, word b, word c) {
          if (immediatep(buff)) return IFALSE;
          size = (hdrsize(*buff)-1)*W;
          if (len > size) return IFALSE;
-         wrote = write(fd, ((byte *)buff)+W, len);
+         wrote = radamsa_write(fd, ((byte *)buff)+W, len);
          if (wrote > 0) return F(wrote);
          if (errno == EAGAIN || errno == EWOULDBLOCK) return F(0);
          return IFALSE; }
@@ -742,18 +778,18 @@ static word prim_sys(int op, word a, word b, word c) {
          int n, nwords = (max/W) + 2;
          allocate(nwords, res);
 #ifndef WIN32
-         n = read(fd, ((char *) res) + W, max);
+         n = radamsa_read(fd, ((char *) res) + W, max);
 #else
          if (fd == 0) { /* windows stdin in special apparently  */
             if(!_isatty(0) || _kbhit()) { /* we don't get hit by kb in pipe */
-               n = read(fd, ((char *) res) + W, max);
+               n = radamsa_read(fd, ((char *) res) + W, max);
             } else {
                n = -1;
                errno = EAGAIN;
             }
 
          } else {
-            n = read(fd, ((char *) res) + W, max);
+            n = radamsa_read(fd, ((char *) res) + W, max);
          }
 #endif
          if (n > 0) { /* got some bytes */
@@ -810,7 +846,7 @@ static word prim_sys(int op, word a, word b, word c) {
          if (immediatep(buff)) return IFALSE;
          size = (hdrsize(*buff)-1)*W;
          if (len > size) return IFALSE;
-         wrote = send(fd, ((byte *)buff)+W, len, 0);
+         wrote = send(fd, (const char *)((byte *)buff)+W, len, 0);
          if (wrote > 0) return F(wrote);
          if (errno == EAGAIN || errno == EWOULDBLOCK) return F(0);
          return IFALSE; }
@@ -819,11 +855,11 @@ static word prim_sys(int op, word a, word b, word c) {
          if (!allocp(name)) return IFALSE;
          return strp2owl((byte *)getenv(name + W)); }
       case 17: { /* exec[v] path argl ret */
+#ifndef WIN32
          char *path = ((char *) a) + W;
          int nargs = llen((word *)b);
          char **args = malloc((nargs+1) * sizeof(char *));
          char **argp = args;
-#ifndef WIN32      
          if (args == NULL) 
             return IFALSE;
          while(nargs--) {
@@ -929,7 +965,7 @@ static word prim_sys(int op, word a, word b, word c) {
          peer.sin_family = AF_INET;
          peer.sin_port = htons(port);
          peer.sin_addr.s_addr = htonl((ip[0]<<24) | (ip[1]<<16) | (ip[2]<<8) | (ip[3]));
-         if (sendto(sock, data, nbytes, 0, (struct sockaddr *) &peer, sizeof(peer)) == -1)
+         if (sendto(sock, (const char *)data, nbytes, 0, (struct sockaddr *) &peer, sizeof(peer)) == -1)
             return IFALSE;
          return ITRUE; }
       case 28: { /* setenv <owl-raw-bvec-or-ascii-leaf-string> <owl-raw-bvec-or-ascii-leaf-string> */
@@ -1664,8 +1700,7 @@ invoke_mcp: /* R4-R6 set, set R3=cont and R4=syscall and call mcp */
   ...
   how to work with thread scheduler? special exit value? multiple value exit? syscall?
 */
-
-int main(int nargs, char **argv) {
+int radamsa_main(int nargs, char **argv) {
    int rval;
 #ifndef WIN32
    tcgetattr(0, &tsettings);
@@ -1677,8 +1712,8 @@ int main(int nargs, char **argv) {
    // Initialize Winsock
    int sock_init = WSAStartup(MAKEWORD(2,2), &wsaData);
    if (sock_init  != 0) {
-       puts("WSAStartup failed");
-       return 1;
+      puts("WSAStartup failed");
+      return 1;
    }
    word boot_result = boot(nargs, argv);
    WSACleanup();
@@ -1686,4 +1721,362 @@ int main(int nargs, char **argv) {
 #endif
    return rval;
 }
+#ifndef LIB_RADAMSA
+int main(int argc, char **argv)
+{
+   return radamsa_main(argc, argv);
+}
+#else
+#ifndef HEXDUMP_COLS
+#define HEXDUMP_COLS 16
+#endif
+void hexdump(void *mem, unsigned int len) {
+   unsigned int i, j;
+   for(i = 0; i < len + ((len % HEXDUMP_COLS) ? (HEXDUMP_COLS - len % HEXDUMP_COLS) : 0); i++)
+   {
+      /* print offset */
+      if(i % HEXDUMP_COLS == 0)
+         printf("0x%06x: ", i);
 
+      /* print hex data */
+      if(i < len)
+         printf("%02x ", 0xFF & ((char*)mem)[i]);
+      else /* end of block, just aligning for ASCII dump */
+         printf("   ");
+
+      /* print ASCII dump */
+      if(i % HEXDUMP_COLS == (HEXDUMP_COLS - 1))
+      {
+         for(j = i - (HEXDUMP_COLS - 1); j <= i; j++)
+         {
+            if(j >= len) /* end of block, not really printing */
+               putchar(' ');
+            else if(isprint(((char*)mem)[j])) /* printable char */
+               putchar(0xFF & ((char*)mem)[j]);
+            else /* other char */
+               putchar('.');
+         }
+         putchar('\n');
+      }
+   }
+}
+
+int hexdump_file(char *path, unsigned int len) {
+   struct stat st;
+   stat(path, &st);
+   unsigned int size = (st.st_size > len) ? len : st.st_size;
+   char *buf = malloc(size);
+   if(!buf) return FALSE;
+
+   FILE *f = fopen(path, "r");
+   if(!f) return FALSE;
+   fread(buf, st.st_size, 1, f);
+   fclose(f);
+
+   hexdump(buf, st.st_size);
+
+   if(buf) free(buf);
+   return TRUE;
+}
+
+struct _radamsa {
+  unsigned char *input;
+  size_t input_size;
+  size_t input_index;
+
+  unsigned char *output;
+  size_t output_size;
+
+  struct _list_entry *allocations;
+
+  BOOL radamsa_read_hook_enabled;
+  BOOL radamsa_write_hook_enabled;
+  BOOL radamsa_lseek_hook_enabled;
+} gRadamsa;
+
+#ifndef min
+ #define min(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a < _b ? _a : _b; })
+#endif
+
+typedef long off_t;
+off_t radamsa_lseek(int fd, off_t offset, int whence)
+{
+      if(DEBUG) printf("radamsa_lseek(fd=%d, offset=%d, whence=%d)\n\n",
+                  fd, (int)offset, whence);
+      return lseek(fd, offset, whence);
+}
+
+ssize_t radamsa_read(int fd, void *buf, size_t count) {
+
+   if(gRadamsa.radamsa_read_hook_enabled)
+   {
+      // virtualize read from a memory buffer
+      ssize_t size = min(count, gRadamsa.input_size - gRadamsa.input_index);
+      if(DEBUG) printf("virtualized radamsa_read(fd=%d, buf=%p, count=%d)\n"
+                        "requested: %d  input_size: %d  input_index: %d  returned: %d\n\n",
+                        fd, buf, (int)count,
+                        (int)count, (int)gRadamsa.input_size, (int)gRadamsa.input_index, (int)size);
+      memcpy(buf, gRadamsa.input + gRadamsa.input_index, size);
+      //hexdump(buf, size);
+
+      gRadamsa.input_index += size;
+      return size;
+   }
+   else
+   {
+      if(DEBUG) printf("radamsa_read(fd=%d, buf=%p, count=%d)\n\n", fd, buf, (int)count);
+      return read(fd, buf, count);
+   }
+}
+
+ssize_t radamsa_write(int fd, const void *buf, size_t count) {
+   if(gRadamsa.radamsa_write_hook_enabled)
+   {
+      // virtualize write to a memory buffer
+      uint32_t oldbuf_size = gRadamsa.output_size;
+      size_t newbuf_size = oldbuf_size + count;
+      uint8_t *newbuf = malloc(newbuf_size);
+      if(!newbuf) return -1;
+      memcpy(newbuf, gRadamsa.output, oldbuf_size);
+      memcpy(newbuf + oldbuf_size, buf, count);
+      gRadamsa.output_size = newbuf_size;
+      if(DEBUG) printf("virtualized radamsa_write(fd=%d, buf=%p, size=%d)\nrequested: %d  old size: %d  new size:%d\n\n",
+                        fd, buf, (int)count,
+                        (int)count, (int)oldbuf_size, (int)newbuf_size);
+      //hexdump(newbuf, newbuf_size);
+
+      if(gRadamsa.output) free(gRadamsa.output);
+      gRadamsa.output = newbuf;
+
+      return (ssize_t)count;
+   }
+   else
+   {
+      if(DEBUG) printf("radamsa_write(fd=%d, buf=%p, size=%d)\n\n", fd, buf, (int)count);
+      return write(fd, buf, count);
+   }
+}
+//int radamsa_file_to_file(char *input_path, char *output_path);
+__stdcall int radamsa_mem_to_mem_ex(unsigned char *input_buf, const size_t input_size, unsigned char **output_buf, size_t *output_size, int argc, char **argv)
+{
+   gRadamsa.input = input_buf;
+   gRadamsa.input_size = input_size;
+   gRadamsa.input_index = 0;
+
+   gRadamsa.radamsa_read_hook_enabled = TRUE;
+   gRadamsa.radamsa_write_hook_enabled = TRUE;
+   boot(argc, argv);
+   gRadamsa.radamsa_read_hook_enabled = FALSE;
+   gRadamsa.radamsa_write_hook_enabled = FALSE;
+
+   // reset input global state
+   if(gRadamsa.input) free(gRadamsa.input);
+   gRadamsa.input = NULL;
+   gRadamsa.input_size = 0;
+   gRadamsa.input_index = 0;
+
+#ifdef LIB_RADAMSA_NOCOPY
+   // these must both be reset by caller!
+   *output_buf = gRadamsa.output;
+   *output_size = gRadamsa.output_size;
+#else
+   int size = gRadamsa.output_size;
+   *output_size = size;
+
+   unsigned char *buf = malloc(size);
+   if(!buf) return FALSE;
+   memcpy(buf, gRadamsa.output, size);
+   *output_buf = buf;
+
+   // reset output global state
+   if(gRadamsa.output) free(gRadamsa.output);
+   gRadamsa.output = NULL;
+   gRadamsa.output_size = 0;
+#endif
+   return TRUE;
+}
+__stdcall int radamsa_mem_to_mem(unsigned char *input_buf, const size_t input_size, unsigned char **output_buf, size_t *output_size)
+{
+   char *argv[] = { "radamsa", "nul", NULL };
+   int argc = sizeof(argv) / sizeof(argv[0]) - 1;
+
+   char **args = calloc(1, sizeof(argv));
+   if(!args) return FALSE;
+   memcpy(args, argv, sizeof(argv));
+
+   int rval = radamsa_mem_to_mem_ex(input_buf, input_size, output_buf, output_size, argc, args);
+   if(args) free(args);
+
+   return rval;
+}
+__stdcall int radamsa_mem_to_file_ex(unsigned char *input_buf, const size_t input_size, char *output_path, int argc, char **argv)
+{
+   gRadamsa.input = input_buf;
+   gRadamsa.input_size = input_size;
+   gRadamsa.input_index = 0;
+
+   gRadamsa.radamsa_read_hook_enabled = TRUE;
+   boot(argc, argv);
+   gRadamsa.radamsa_read_hook_enabled = FALSE;
+
+   // reset input global state
+   if(gRadamsa.input) free(gRadamsa.input);
+   gRadamsa.input = NULL;
+   gRadamsa.input_size = 0;
+   gRadamsa.input_index = 0;
+
+   return TRUE;
+}
+__stdcall int radamsa_mem_to_file(unsigned char *input_buf, const size_t input_size, char *output_path)
+{
+   char *argv[] = { "radamsa", "nul", "-o", output_path, NULL };
+   int argc = sizeof(argv) / sizeof(argv[0]) - 1;
+
+   char **args = calloc(1, sizeof(argv));
+   memcpy(args, argv, sizeof(argv));
+
+   int rval = radamsa_mem_to_file_ex(input_buf, input_size, output_path, argc, args);
+   free(args);
+
+   return rval;
+}
+__stdcall int radamsa_file_to_mem_ex(char *input_path, unsigned char **output_buf, size_t *output_size, int argc, char **argv)
+{
+   gRadamsa.radamsa_write_hook_enabled = TRUE;
+   boot(argc, argv);
+   gRadamsa.radamsa_write_hook_enabled = FALSE;
+
+#ifdef LIB_RADAMSA_NOCOPY
+   // these must both be reset by caller!
+   *output_buf = gRadamsa.output;
+   *output_size = gRadamsa.output_size;
+#else
+   int size = gRadamsa.output_size;
+
+   unsigned char *buf = malloc(size);
+   if(!buf) return FALSE;
+   memcpy(buf, gRadamsa.output, size);
+
+   *output_buf = buf;
+   *output_size = size;
+
+   // reset output global state
+   if(gRadamsa.output) free(gRadamsa.output);
+   gRadamsa.output = NULL;
+   gRadamsa.output_size = 0;
+#endif
+   return TRUE;
+}
+__stdcall int radamsa_file_to_mem(char *input_path, unsigned char **output_buf, size_t *output_size)
+{
+   char *argv[] = { "radamsa", input_path, NULL };
+   int argc = sizeof(argv) / sizeof(argv[0]) - 1;
+
+   char **args = calloc(1, sizeof(argv));
+   memcpy(args, argv, sizeof(argv));
+
+   int rval = radamsa_file_to_mem_ex(input_path, output_buf, output_size, argc, args);
+   free(args);
+
+   return rval;
+}
+#ifdef LIB_RADAMSA_TESTS
+//
+// tests for libradamsa functions
+// compile: x86_64-w64-mingw32-gcc -DLIB_RADAMSA -DLIB_RADAMSA_TESTS -DWIN32 -Wall -g -o rad.exe radamsa-win32.c -lwsock32
+//
+int test_mem_to_mem(int argc, char **argv)
+{
+   unsigned char *output = NULL;
+   size_t output_size = 0;
+   size_t input_size = 64;
+   unsigned char *input = calloc(1, input_size);
+   memset(input, 'A', input_size - 1);
+
+   if(argc > 1) {
+      printf("\n=========== TEST: MEM TO MEM (EX) ===========\n\n");
+      radamsa_mem_to_mem_ex(input, input_size, &output, &output_size, argc, argv);
+   } else {
+      printf("\n============= TEST: MEM TO MEM =============\n\n");
+      radamsa_mem_to_mem(input, input_size, &output, &output_size);
+   }
+   if(output_size < 1) printf("warning: output_size is too small: %d\n", (int)output_size);
+
+   printf("test_mem_to_mem output_size: %d\n", (int)output_size);
+   hexdump(output, output_size);
+
+   free(output);
+
+   return TRUE;
+}
+int test_mem_to_file(int argc, char **argv)
+{
+   char *output_path = "radamsa_libtest.output_file";
+   size_t input_size = 64;
+   unsigned char *input = calloc(1, input_size);
+   memset(input, 'A', input_size - 1);
+
+   if(argc > 1) {
+      printf("\n=========== TEST: MEM TO FILE (EX) ===========\n\n");
+      radamsa_mem_to_file_ex(input, input_size, output_path, argc, argv);
+   } else {
+      printf("\n============= TEST: MEM TO FILE =============\n\n");
+      radamsa_mem_to_file(input, input_size, output_path);
+   }
+
+   struct stat st;
+   stat(output_path, &st);
+   printf("test_mem_to_file output_size: %d\ntest_mem_to_file output_path: %s\n", (int)st.st_size, output_path);
+   hexdump_file(output_path, st.st_size);
+
+   return TRUE;
+}
+int test_file_to_mem(int argc, char **argv)
+{
+   char *input_path = "radamsa_libtest.output_file";
+   unsigned char *output = NULL;
+   size_t output_size = 0;
+
+   if(argc > 1) {
+      printf("\n=========== TEST: FILE TO MEM (EX) ===========\n\n");
+      radamsa_file_to_mem_ex(input_path, &output, &output_size, argc, argv);
+   } else {
+      printf("\n============= TEST: FILE TO MEM =============\n\n");
+      radamsa_file_to_mem(input_path, &output, &output_size);
+   }
+
+   if(output_size < 1) { printf("warning: output_size is too small: %d\n", (int)output_size); }
+
+   printf("test_file_to_mem output_size: %d\n", (int)output_size);
+   hexdump(output, output_size);
+
+   free(output);
+
+   return TRUE;
+}
+void run_libradamsa_tests(int argc, char **argv)
+{
+   int rval_test_mem_to_mem = FALSE;
+   rval_test_mem_to_mem = test_mem_to_mem(argc, argv);
+
+   int rval_test_mem_to_file = FALSE;
+   rval_test_mem_to_file = test_mem_to_file(argc, argv);
+
+   int rval_test_file_to_mem = FALSE;
+   rval_test_file_to_mem = test_file_to_mem(argc, argv);
+
+   printf("\n\nlibradamsa test results:\n\n");
+   printf("test_mem_to_mem:  %s\n", rval_test_mem_to_mem ? "OK" : "FAIL");
+   printf("test_mem_to_file: %s\n", rval_test_mem_to_file ? "OK" : "FAIL");
+   printf("test_file_to_mem: %s\n", rval_test_file_to_mem ? "OK" : "FAIL");
+}
+int main(int argc, char **argv)
+{
+   run_libradamsa_tests(argc, argv);
+   return 0;
+}
+#endif // LIB_RADAMSA_TESTS
+#endif // LIB_RADAMSA

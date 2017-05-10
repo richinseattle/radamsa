@@ -7,10 +7,13 @@ OFLAGS=-O2
 OWL=ol-0.1.13
 OWLURL=https://github.com/aoh/owl-lisp/files/449350
 USR_BIN_OL=/usr/bin/ol
-WIN32_CC=x86_64-w64-mingw32-gcc
+MINGW64_CC=x86_64-w64-mingw32-gcc
+MINGW_CC=$(MINGW64_CC)
+MINGW_LDFLAGS?=-lwsock32
 
-everything: bin/radamsa
-win32: bin/radamsa.exe
+everything: bin/radamsa bin/radamsa.exe bin/libradamsa.dll
+win: bin/radamsa.exe
+dll: bin/libradamsa.dll
 
 build_radamsa:
 	test -x $(USR_BIN_OL)
@@ -22,17 +25,25 @@ bin/radamsa: radamsa.c
 	mkdir -p bin
 	$(CC) $(CFLAGS) $(LDFLAGS) -o bin/radamsa radamsa.c
 
-bin/radamsa.exe: radamsa-win32.c
+bin/radamsa.exe: radx.c
 	mkdir -p bin
-	$(WIN32_CC) -DWIN32 $(CFLAGS) $(LDFLAGS) -o bin/radamsa.exe radamsa-win32.c -lwsock32
+	$(MINGW_CC) -DWIN32 $(CFLAGS) $(LDFLAGS) -o bin/radamsa.exe radx.c $(MINGW_LDFLAGS)
+
+bin/libradamsa.dll: radx.c
+	mkdir -p bin
+	$(MINGW_CC) -DWIN32 -DLIB_RADAMSA -shared $(CFLAGS) -o bin/libradamsa.dll radx.c -Wl,--out-implib,bin/libradamsa.a $(MINGW_LDFLAGS)
+
+bin/libtest.exe: radx.c
+	mkdir -p bin
+	$(MINGW_CC) -DWIN32 -DLIB_RADAMSA -DLIB_RADAMSA_TESTS $(CFLAGS) -g -ggdb $(LDFLAGS) -o bin/libtest.exe radx.c $(MINGW_LDFLAGS)
 
 radamsa.c: rad/*.scm
 	test -x bin/ol || make bin/ol
 	bin/ol $(OFLAGS) -o radamsa.c rad/main.scm
  
-radamsa-win32.c: rad/*.scm
-	test -x owl-lisp || git clone https://github.com/aoh/owl-lisp.git && cd owl-lisp && git checkout -b develop origin/develop && make
-	owl-lisp/bin/ol -R ovm-win32.c $(OFLAGS) -o radamsa-win32.c rad/main.scm
+radx.c: rad/*.scm
+	test -x owl-lisp/bin/ol || git clone https://github.com/aoh/owl-lisp.git ; cd owl-lisp && git checkout -b develop origin/develop ; make simple-ol
+	owl-lisp/bin/ol -R rt/rad-rt.c $(OFLAGS) -o radx.c rad/main.scm
 
 radamsa.fasl: rad/*.scm bin/ol
 	bin/ol -o radamsa.fasl rad/main.scm
@@ -52,8 +63,10 @@ install: bin/radamsa
 	cat doc/radamsa.1 | gzip -9 > $(DESTDIR)$(PREFIX)/share/man/man1/radamsa.1.gz
 
 clean:
-	-rm radamsa.c bin/radamsa .seal-of-quality
-	-rm bin/ol $(OWL).c.gz $(OWL).c
+	-rm -f radamsa.c bin/radamsa .seal-of-quality
+	-rm -f bin/ol $(OWL).c.gz $(OWL).c
+	-rm -f radx.c bin/radamsa.exe bin/libradamsa.lib bin/libradamsa.dll bin/libtest.exe
+	-rm -rf owl-lisp
 
 test: .seal-of-quality
 
